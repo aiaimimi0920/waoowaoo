@@ -92,6 +92,21 @@ class RealBinaryTests(unittest.TestCase):
             with self.subTest(mode=mode), self.assertRaisesRegex(ScanError, "sarif_identity_coverage_failed"):
                 validate_report(self.runner, facts, 1, facts["reporter_exit"])
 
+    def test_real_reporter_alias_group_repeats_are_fully_accounted(self):
+        second = json.loads(json.dumps(self.advisory))
+        second["id"] = "GO-2021-0054"
+        second["aliases"] = list(set(second.get("aliases", []) + [self.advisory["id"]]))
+        archive = self.out / "db/osv-scalibr/Go/all.zip"
+        with zipfile.ZipFile(archive, "a") as stream:
+            stream.writestr(second["id"] + ".json", json.dumps(second))
+        self.assertEqual(self.fixture("1.3.1"), 1)
+        facts = complete_scan(self.runner, 1, "go.mod")
+        self.assertTrue(facts["sarif_identity_complete"])
+        self.assertEqual(facts["vulnerability_records"], 2)
+        self.assertEqual(facts["sarif_result_count"], 2)
+        self.assertEqual(facts["covered_package_occurrences"], 1)
+        self.assertEqual(facts["covered_sarif_rows"], 2)
+
 
     def test_missing_json_reproduces_upstream_zero_but_guard_rejects_it(self):
         self.assertEqual(report(self.runner, "/evidence/missing.json"), 0)

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from check_security_inputs import validate
 from security_report import ReportError, write_step_summary
-from sarif_coverage import CoverageError, expected_findings, validate_coverage
+from sarif_coverage import CoverageError, expected_findings, expected_row_count, validate_coverage
 
 IMAGE = "ghcr.io/google/osv-scanner-action@sha256:dcd947131d8d11b8d0964de6590661fb921a4ecbd7b90a7cb21083acfc3fd8cc"
 VERSION = "2.5.1"
@@ -109,7 +109,7 @@ def inventory(path: Path, scanner_exit: int, lockfile: str) -> dict:
             vulnerability_count += len(identifiers)
     require(bool(vulnerability_count) == (scanner_exit == 1), "scanner_result_mismatch")
     facts = {"package_count": package_count, "vulnerability_records": vulnerability_count,
-             "expected_sarif_results": len(occurrences)}
+             "expected_sarif_results": expected_row_count(document)}
     if lockfile == "go.mod":
         require(len(go_modules) <= 500, "result_limit_exceeded")
         facts["go_module_inventory"] = [dict(zip(["name", "version", "ecosystem"], row))

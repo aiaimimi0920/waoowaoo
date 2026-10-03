@@ -86,5 +86,32 @@ class CoverageTests(unittest.TestCase):
         with self.assertRaises(CoverageError):
             validate_coverage(document, sarif)
 
+    def test_vendor_alias_group_multiplicity_preserves_all_rows(self):
+        document, sarif = self.fixture()
+        alias_id = "GHSA-second-primary"
+        for source in document["results"]:
+            entry = source["packages"][0]
+            entry["vulnerabilities"].append({"id": alias_id, "aliases": ["CVE-2020-1234"]})
+            entry["groups"][0]["ids"].append(alias_id)
+        run = sarif["runs"][0]
+        run["tool"]["driver"]["rules"][0]["deprecatedIds"].append(alias_id)
+        for row in run["results"]:
+            row["message"]["text"] = row["message"]["text"].replace("').", "', '" + alias_id + "').")
+        run["results"] += copy.deepcopy(run["results"])
+        report = validate_coverage(document, sarif)
+        self.assertEqual(report["covered_sarif_rows"], 4)
+        self.assertEqual(report["covered_package_occurrences"], 2)
+        for mode in ["missing", "extra", "replace"]:
+            bad = copy.deepcopy(sarif)
+            rows = bad["runs"][0]["results"]
+            if mode == "missing":
+                rows.pop()
+            elif mode == "extra":
+                rows.append(copy.deepcopy(rows[0]))
+            else:
+                rows[1] = copy.deepcopy(rows[0])
+            with self.subTest(mode=mode), self.assertRaises(CoverageError):
+                validate_coverage(document, bad)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

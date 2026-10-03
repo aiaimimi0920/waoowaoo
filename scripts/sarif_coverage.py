@@ -1,6 +1,7 @@
 """Check OSV 2.5.1 SARIF aliases and each package/version/lock fingerprint."""
 import hashlib
 import re
+from collections import Counter
 
 LIMIT = 100_000
 
@@ -72,16 +73,22 @@ def expected_findings(document):
     for group, uri, label, ecosystem, aliases in rows:
         aliases_by_group.setdefault(find(group), set()).update(aliases)
     expected, rules = {}, {}
+    primary_ids = Counter(find(value) for value in parent)
     for group, uri, label, ecosystem, aliases in rows:
         full_aliases = aliases_by_group[find(group)]
         display = ordered_ids(full_aliases)[0]
         rules.setdefault(display, set()).update(full_aliases)
         fingerprint = hashlib.sha256((display + ":" + uri + ":" + label).encode("utf-8")).hexdigest()
         identity = (display, uri, fingerprint)
-        semantic = (label, ecosystem, find(group))
+        semantic = (label, ecosystem, find(group), primary_ids[find(group)])
         require(identity not in expected or expected[identity] == semantic, "ambiguous_finding_identity")
         expected[identity] = semantic
     return expected, rules
+
+def expected_row_count(document):
+    # OSV 2.5.1 emits a complete group once for every primary ID mapped to it.
+    expected, _ = expected_findings(document)
+    return sum(value[3] for value in expected.values())
 
 def validate_coverage(document, sarif):
     expected, rules_expected = expected_findings(document)
@@ -102,8 +109,9 @@ def validate_coverage(document, sarif):
         actual_rules[name] = alias_set
     require(actual_rules == rules_expected, "sarif_alias_coverage_mismatch")
     results = run.get("results")
-    require(isinstance(results, list) and len(results) == len(expected), "sarif_identity_count_mismatch")
-    covered = set()
+    required = Counter({identity: value[3] for identity, value in expected.items()})
+    require(isinstance(results, list) and len(results) == sum(required.values()), "sarif_identity_count_mismatch")
+    covered = Counter()
     for result in results:
         require(isinstance(result, dict), "invalid_sarif_result")
         rule = identifier(result.get("ruleId"))
@@ -120,13 +128,14 @@ def validate_coverage(document, sarif):
         fingerprint = fingerprints.get("primaryLocationLineHash")
         require(isinstance(fingerprint, str) and re.fullmatch(r"[a-f0-9]{64}", fingerprint), "invalid_sarif_fingerprint")
         identity = (rule, uri, fingerprint)
-        require(identity in expected and identity not in covered, "sarif_package_version_uri_fingerprint_mismatch")
+        require(identity in expected and covered[identity] < required[identity], "sarif_package_version_uri_fingerprint_mismatch")
         label = expected[identity][0]
         aliases = ordered_ids(actual_rules[rule])
         suffix = " (also known as '" + "', '".join(aliases[1:]) + "')" if len(aliases) > 1 else ""
         message = "Package '" + label + "' is vulnerable to '" + rule + "'" + suffix + "."
         require(result.get("message", {}).get("text") == message, "sarif_package_message_mismatch")
-        covered.add(identity)
-    require(covered == set(expected), "incomplete_sarif_identity_coverage")
+        covered[identity] += 1
+    require(covered == required, "incomplete_sarif_identity_coverage")
     return {"sarif_identity_complete": True, "covered_package_occurrences": len(covered),
+            "covered_sarif_rows": sum(covered.values()),
             "covered_alias_ids": len({alias for values in actual_rules.values() for alias in values})}
