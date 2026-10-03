@@ -13,7 +13,7 @@ from pathlib import Path
 
 from check_security_inputs import validate
 from security_report import ReportError, write_step_summary
-from sarif_coverage import CoverageError, validate_coverage
+from sarif_coverage import CoverageError, expected_findings, validate_coverage
 
 IMAGE = "ghcr.io/google/osv-scanner-action@sha256:dcd947131d8d11b8d0964de6590661fb921a4ecbd7b90a7cb21083acfc3fd8cc"
 VERSION = "2.5.1"
@@ -231,6 +231,27 @@ def report(runner: BinaryRunner, new: str = "/evidence/results.json") -> int:
 def validate_report(runner: BinaryRunner, facts: dict, scanner_exit: int,
                     reporter_exit: int) -> dict:
     require(reporter_exit in {0, 1}, "reporter_execution_failed")
+    source_document = read_json(runner.evidence / 'results.json')
+    sarif_document = read_json(runner.evidence / 'results.sarif')
+    semantic_expected = None
+    coverage_error = None
+    identity_complete = False
+    try:
+        identities, _ = expected_findings(source_document)
+        semantic_expected = len(identities)
+        identity_complete = validate_coverage(source_document, sarif_document)['sarif_identity_complete']
+    except (CoverageError, KeyError, TypeError, AttributeError) as error:
+        coverage_error = str(error) if isinstance(error, CoverageError) else 'invalid_identity_structure'
+    runs = sarif_document.get('runs', [])
+    actual = len(runs[0].get('results', [])) if isinstance(runs, list) and len(runs) == 1 else None
+    if actual != facts['expected_sarif_results'] or not identity_complete:
+        print(json.dumps({'analysis_complete': False, 'report_valid': False,
+            'error_kind': 'sarif_identity_diagnostic',
+            'scanner_exit': scanner_exit, 'reporter_exit': reporter_exit,
+            'package_count': facts['package_count'], 'vulnerability_records': facts['vulnerability_records'],
+            'expected_local_group_occurrences': facts['expected_sarif_results'],
+            'expected_semantic_occurrences': semantic_expected, 'actual_sarif_rows': actual,
+            'identity_verification_complete': identity_complete, 'coverage_error': coverage_error}))
     count = validate_sarif(runner.evidence / "results.sarif", facts["expected_sarif_results"])
     require(reporter_exit == scanner_exit, "reporter_exit_mismatch")
     try:
