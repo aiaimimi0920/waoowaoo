@@ -1,0 +1,44 @@
+name: Security Hygiene
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "45 18 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: security-hygiene-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Offline secret and workflow audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout complete history
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install exact checksum-verified CLI binaries
+        run: python3 scripts/install_security_tools.py
+      - name: Test report policy with synthetic data
+        run: python3 scripts/tests/test_hygiene_policy.py
+      - name: Test real offline binaries with synthetic fixtures
+        run: python3 scripts/tests/test_hygiene_binaries.py
+      - name: Audit and validate before reporting
+        run: python3 scripts/hygiene_scan.py --advisory
+      - name: Upload only redacted audit inventory
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: hygiene-inventory-${{ github.sha }}
+          path: .tmp/redacted/hygiene.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
